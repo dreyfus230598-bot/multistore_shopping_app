@@ -1,0 +1,45 @@
+name: Gerar IPA para Sideloadly (iOS)
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch: # Permite disparar o build manualmente pelo botão no GitHub
+
+jobs:
+  build-ipa:
+    name: Compilar IPA no macOS Cloud
+    runs-on: macos-14 # Máquinas Mac M2 da Apple nos servidores do GitHub
+
+    steps:
+      - name: Baixar código do repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Instalar dependências Flutter
+        run: |
+          cd mobile
+          flutter pub get
+
+      - name: Compilar App iOS (Release sem assinatura)
+        run: |
+          cd mobile
+          flutter build ios --release --no-codesign
+
+      - name: Empacotar arquivo .IPA para Sideloadly
+        run: |
+          mkdir -p Payload
+          cp -R mobile/build/ios/iphoneos/Runner.app Payload/
+          zip -r MultiStore-App.ipa Payload
+          ls -la MultiStore-App.ipa
+
+      - name: Disponibilizar arquivo .IPA para Download
+        uses: actions/upload-artifact@v4
+        with:
+          name: MultiStore-iPhone-IPA
+          path: MultiStore-App.ipa
+          retention-days: 7
