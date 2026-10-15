@@ -8,7 +8,7 @@ on:
 jobs:
   build-ipa:
     name: Compilar IPA no macOS Cloud
-    runs-on: macos-14 # Mac M2 nos servidores da Apple / GitHub
+    runs-on: macos-14
 
     steps:
       - name: Baixar código do repositório
@@ -20,46 +20,50 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: Configurar e Gerar Estrutura Nativa iOS
+      - name: Configurar Estrutura e Assets Flutter iOS
         run: |
           cd mobile
           flutter create --platforms=ios --org com.multistore.app .
           flutter pub get
+          # Prepara os artefatos internos do Flutter sem travar no codesigning
+          flutter build ios --config-only --release
 
-          # Desativar exigência de Provisioning Profile / Team no Xcode para permitir build unsigned (Sideloadly)
+      - name: Configurar Assinatura Ad-Hoc no Xcode
+        run: |
+          cd mobile
+          # Configura assinatura Ad-Hoc ("-") nativa do macOS para dispensar conta Apple paga
           python3 -c "
           path = 'ios/Runner.xcodeproj/project.pbxproj'
           with open(path, 'r') as f:
               data = f.read()
-          data = data.replace('CODE_SIGN_STYLE = Automatic;', 'CODE_SIGN_STYLE = Manual; CODE_SIGNING_ALLOWED = NO; CODE_SIGNING_REQUIRED = NO; CODE_SIGN_IDENTITY = \"\";')
+          data = data.replace('CODE_SIGN_STYLE = Automatic;', 'CODE_SIGN_STYLE = Manual; CODE_SIGN_IDENTITY = \"-\"; PROVISIONING_PROFILE_SPECIFIER = \"\"; DEVELOPMENT_TEAM = \"\";')
+          data = data.replace('CODE_SIGN_IDENTITY = \"Apple Development\";', 'CODE_SIGN_IDENTITY = \"-\";')
           with open(path, 'w') as f:
               f.write(data)
-          print('Assinatura desativada com sucesso no project.pbxproj')
+          print('Assinatura Ad-Hoc configurada no project.pbxproj')
           "
 
-          echo "CODE_SIGNING_ALLOWED=NO" >> ios/Flutter/Release.xcconfig
-          echo "CODE_SIGNING_REQUIRED=NO" >> ios/Flutter/Release.xcconfig
-          echo "CODE_SIGN_IDENTITY=" >> ios/Flutter/Release.xcconfig
-          echo "EXPANDED_CODE_SIGN_IDENTITY=" >> ios/Flutter/Release.xcconfig
+          echo 'CODE_SIGN_IDENTITY=-' >> ios/Flutter/Release.xcconfig
+          echo 'CODE_SIGN_STYLE=Manual' >> ios/Flutter/Release.xcconfig
+          echo 'PROVISIONING_PROFILE_SPECIFIER=' >> ios/Flutter/Release.xcconfig
+          echo 'DEVELOPMENT_TEAM=' >> ios/Flutter/Release.xcconfig
 
-      - name: Compilar App iOS (Release sem assinatura)
+      - name: Compilar Binário Nativo iOS com Xcode
         run: |
-          cd mobile
-          if ! flutter build ios --release --no-codesign; then
-            echo "Finalizando empacotamento nativo via xcodebuild..."
-            cd ios
-            xcodebuild -workspace Runner.xcworkspace \
-              -scheme Runner \
-              -configuration Release \
-              -sdk iphoneos \
-              -destination 'generic/platform=iOS' \
-              -derivedDataPath ../build/ios_derived \
-              CODE_SIGNING_ALLOWED=NO \
-              CODE_SIGNING_REQUIRED=NO \
-              CODE_SIGN_IDENTITY="" \
-              build
-            cd ..
-          fi
+          cd mobile/ios
+          xcodebuild -workspace Runner.xcworkspace \
+            -scheme Runner \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath ../build/ios_derived \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=YES \
+            CODE_SIGNING_ALLOWED=YES \
+            CODE_SIGN_STYLE=Manual \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            DEVELOPMENT_TEAM="" \
+            build
 
       - name: Empacotar arquivo .IPA para Sideloadly
         run: |
@@ -67,7 +71,7 @@ jobs:
           RUNNER_APP=$(find mobile/build -name "Runner.app" -type d | head -n 1)
           echo "Runner.app localizado em: $RUNNER_APP"
           if [ -z "$RUNNER_APP" ]; then
-            echo "Erro: Runner.app não foi encontrado nos diretórios de build!"
+            echo "Erro: Runner.app não foi localizado no diretório de build!"
             exit 1
           fi
           cp -R "$RUNNER_APP" Payload/
